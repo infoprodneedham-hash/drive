@@ -1,0 +1,1524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>PS1 Retro Delivery Driver: Rush Shift</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Three.js CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <!-- Google Fonts: VT323 & Share Tech Mono for retro arcade feel -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=VT323&display=swap" rel="stylesheet">
+
+  <style>
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: manipulation;
+    }
+    body, html {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #080b11;
+      font-family: 'Share Tech Mono', monospace;
+      color: #e2e8f0;
+    }
+
+    .font-ps1 {
+      font-family: 'VT323', monospace;
+    }
+
+    /* PS1 CRT Scanline & Chromatic Vignette Filter */
+    .crt-overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 40;
+      background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.3) 50%),
+                  linear-gradient(90deg, rgba(255, 0, 0, 0.03), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.03));
+      background-size: 100% 3px, 6px 100%;
+    }
+    .crt-overlay::after {
+      content: " ";
+      display: block;
+      position: absolute;
+      inset: 0;
+      box-shadow: inset 0 0 90px rgba(0, 0, 0, 0.75);
+      pointer-events: none;
+    }
+
+    #game-canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+    }
+
+    /* Retro Phone Dashboard Casing */
+    .phone-casing {
+      background: linear-gradient(150deg, #1b2029, #0d1016);
+      box-shadow: 0 12px 30px -4px rgba(0,0,0,0.85), inset 0 1px 2px rgba(255,255,255,0.18), 0 0 15px rgba(16, 185, 129, 0.2);
+      border: 2px solid #2d3748;
+    }
+    
+    .screen-glow {
+      box-shadow: inset 0 0 18px rgba(6, 182, 212, 0.12);
+    }
+
+    .custom-scroll::-webkit-scrollbar {
+      width: 4px;
+    }
+    .custom-scroll::-webkit-scrollbar-thumb {
+      background: #10b981;
+      border-radius: 4px;
+    }
+
+    /* Animated Coin Popups */
+    @keyframes floatUpFade {
+      0% { transform: translateY(0px) scale(0.85); opacity: 0; }
+      20% { transform: translateY(-15px) scale(1.3); opacity: 1; }
+      80% { transform: translateY(-65px) scale(1.1); opacity: 1; }
+      100% { transform: translateY(-95px) scale(0.9); opacity: 0; }
+    }
+    .coin-pop {
+      animation: floatUpFade 1.6s forwards ease-out;
+    }
+
+    @keyframes phoneBuzz {
+      0% { transform: translate(0, 0); }
+      25% { transform: translate(-3px, 2px) rotate(-1deg); }
+      50% { transform: translate(3px, -2px) rotate(1deg); }
+      75% { transform: translate(-2px, -1px); }
+      100% { transform: translate(0, 0); }
+    }
+    .phone-alert {
+      animation: phoneBuzz 0.35s ease-in-out 3;
+    }
+  </style>
+</head>
+<body class="relative select-none">
+  <div id="crt" class="crt-overlay"></div>
+  <canvas id="game-canvas"></canvas>
+
+  <!-- Cockpit HUD Layers -->
+  <div id="cockpit-overlay" class="absolute inset-0 pointer-events-none flex flex-col justify-between transition-opacity duration-300">
+    <!-- Top Status Header -->
+    <header class="p-3 sm:p-5 flex justify-between items-start pointer-events-auto">
+      <div class="flex items-center space-x-3 bg-black/75 backdrop-blur-md px-4 py-2 rounded-xl border border-slate-700/80 shadow-lg">
+        <div class="w-3 h-3 rounded-full bg-emerald-400 animate-pulse"></div>
+        <div>
+          <div class="text-[10px] tracking-wider text-slate-400 uppercase font-bold">Shift Clock</div>
+          <div id="timer-display" class="font-ps1 text-3xl sm:text-4xl text-amber-300 tracking-wider">10:00</div>
+        </div>
+      </div>
+
+      <div class="flex space-x-2.5 sm:space-x-3">
+        <!-- Coin Counter -->
+        <div class="flex items-center space-x-2.5 bg-black/75 backdrop-blur-md px-3.5 py-2 rounded-xl border border-amber-500/50 shadow-lg">
+          <div class="w-7 h-7 rounded-full bg-gradient-to-tr from-amber-600 via-yellow-400 to-amber-200 flex items-center justify-center text-black font-black text-xs shadow-inner">
+            $
+          </div>
+          <div>
+            <div class="text-[10px] tracking-wider text-slate-400 uppercase font-bold">Earnings</div>
+            <div id="coin-display" class="font-ps1 text-2xl sm:text-3xl text-yellow-300 tracking-wider">0 COINS</div>
+          </div>
+        </div>
+
+        <!-- Quota Progress -->
+        <div class="flex items-center space-x-2 bg-black/75 backdrop-blur-md px-4 py-2 rounded-xl border border-cyan-500/50 shadow-lg">
+          <div class="text-right">
+            <div class="text-[10px] tracking-wider text-slate-400 uppercase font-bold">Quota</div>
+            <div id="quota-display" class="font-ps1 text-2xl sm:text-3xl text-cyan-300">0 / 6</div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Windshield Upper HUD Banner -->
+    <div class="w-full flex justify-center items-center pointer-events-none px-4">
+      <div id="target-beacon-indicator" class="bg-black/80 border-2 border-amber-400/80 px-4 py-1.5 rounded-full text-xs sm:text-sm text-amber-300 font-mono tracking-wide flex items-center space-x-2 backdrop-blur-md shadow-[0_0_15px_rgba(245,158,11,0.3)]">
+        <span class="inline-block w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping"></span>
+        <span id="target-beacon-text">Active Order: Scanning street grid...</span>
+      </div>
+    </div>
+
+    <!-- Bottom Dashboard View (Speedometer, Compass, and Keyboard Hints) -->
+    <div class="p-3 sm:p-5 flex justify-between items-end relative">
+      <!-- Speedometer & RPM Gauges -->
+      <div class="bg-black/80 backdrop-blur-md p-3 rounded-2xl border border-slate-700/80 shadow-2xl flex items-center space-x-4">
+        <div class="text-center">
+          <div class="font-ps1 text-4xl sm:text-5xl text-emerald-400" id="speedo-val">0</div>
+          <div class="text-[9px] text-slate-400 tracking-widest font-bold">MPH</div>
+        </div>
+        <div class="h-10 w-[1px] bg-slate-700"></div>
+        <div>
+          <div class="text-[10px] text-slate-400 font-bold uppercase" id="gear-indicator">GEAR: D</div>
+          <div class="w-20 bg-slate-800 rounded-full h-2 mt-1 overflow-hidden">
+            <div id="rpm-bar" class="bg-gradient-to-r from-emerald-500 via-amber-400 to-rose-500 h-full w-0 transition-all duration-75"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom-Center Compass Readout -->
+      <div id="nav-compass-container" class="absolute left-1/2 -translate-x-1/2 bottom-3 sm:bottom-5 pointer-events-none flex flex-col items-center">
+        <div class="bg-black/90 backdrop-blur-md border-2 border-amber-500/90 rounded-2xl px-4 py-2.5 shadow-2xl flex items-center space-x-3 text-center min-w-[210px] sm:min-w-[250px]">
+          <!-- Rotating Compass Needle -->
+          <div class="relative w-12 h-12 rounded-full bg-slate-900 border-2 border-amber-400 flex items-center justify-center shadow-inner overflow-hidden flex-shrink-0">
+            <div class="absolute text-[8px] text-slate-400 font-bold top-0.5">N</div>
+            <div id="compass-needle" class="w-full h-full flex items-center justify-center transition-transform duration-75" style="transform: rotate(0deg);">
+              <svg class="w-7 h-7 drop-shadow-[0_0_8px_rgba(245,158,11,1)]" viewBox="0 0 24 24" fill="none">
+                <path d="M12 2L17 14L12 11L7 14L12 2Z" fill="#fbbf24" stroke="#f59e0b" stroke-width="1"/>
+                <path d="M12 22L7 14L12 11L17 14L12 22Z" fill="#475569" stroke="#334155" stroke-width="1"/>
+                <circle cx="12" cy="11.5" r="2" fill="#ffffff" />
+              </svg>
+            </div>
+          </div>
+
+          <!-- Target Info -->
+          <div class="text-left flex-1 min-w-0">
+            <div class="flex items-center justify-between">
+              <span id="nav-label" class="text-[9px] text-amber-400 font-bold uppercase tracking-wider truncate">PRIORITY TARGET</span>
+              <span id="nav-dist" class="font-ps1 text-2xl text-emerald-400 leading-none">0m</span>
+            </div>
+            <div id="nav-dest-name" class="text-xs text-white font-medium truncate mt-0.5">Scanning dispatch...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Desktop Keyboard Controls Help -->
+      <div class="hidden md:flex space-x-2 text-[11px] text-slate-300 bg-black/70 px-3 py-1.5 rounded-lg border border-slate-800 backdrop-blur">
+        <span><kbd class="px-1.5 py-0.5 bg-slate-700 rounded text-white text-[10px]">W/S</kbd> Drive</span>
+        <span><kbd class="px-1.5 py-0.5 bg-slate-700 rounded text-white text-[10px]">A/D</kbd> Steer</span>
+        <span><kbd class="px-1.5 py-0.5 bg-slate-700 rounded text-white text-[10px]">SPACE</kbd> Brake</span>
+        <span><kbd class="px-1.5 py-0.5 bg-slate-700 rounded text-white text-[10px]">C</kbd> Cam View</span>
+        <span><kbd class="px-1.5 py-0.5 bg-slate-700 rounded text-white text-[10px]">M</kbd> GPS Size</span>
+        <span><kbd class="px-1.5 py-0.5 bg-slate-700 rounded text-white text-[10px]">H</kbd> Horn</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dash Smartphone with 2D GPS & Priority Order Queue -->
+  <div id="dash-phone" class="fixed right-3 sm:right-6 bottom-4 sm:bottom-6 z-30 w-72 sm:w-80 h-96 sm:h-[430px] rounded-3xl phone-casing p-3 flex flex-col transition-all duration-300 select-none shadow-2xl">
+    <div class="flex justify-between items-center px-2 py-1 text-[11px] text-slate-400 border-b border-slate-700/60 pb-1">
+      <div class="flex items-center space-x-1.5">
+        <span class="inline-block w-2 h-2 rounded-full bg-emerald-500"></span>
+        <span class="font-bold text-slate-300 tracking-wider">PS1-5G</span>
+      </div>
+      <div class="text-[10px] text-emerald-400 font-mono font-bold tracking-widest">COURIER OS v2.2</div>
+      <button id="btn-toggle-phone-size" class="hover:text-white transition px-1 text-xs" title="Expand/Shrink GPS">
+        ⤢
+      </button>
+    </div>
+
+    <!-- 2D Radar Canvas -->
+    <div class="relative w-full h-40 sm:h-44 bg-[#090e17] rounded-xl overflow-hidden mt-2 border border-slate-700/80 screen-glow">
+      <canvas id="gps-canvas" class="w-full h-full block"></canvas>
+      <div class="absolute bottom-1 right-2 text-[9px] text-cyan-400/80 font-mono pointer-events-none">GPS RADAR: TOP-VIEW</div>
+      <div class="absolute top-1 left-2 text-[9px] text-slate-400 font-mono pointer-events-none flex items-center space-x-1">
+        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+        <span>LIVE SATELLITE</span>
+      </div>
+    </div>
+
+    <div class="flex justify-between items-center mt-2 px-1 text-xs">
+      <span class="text-slate-300 font-bold uppercase tracking-wide flex items-center gap-1.5">
+        <span>📦 Active Queue</span>
+        <span id="queue-badge" class="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] px-1.5 py-0.2 rounded-full">0/3</span>
+      </span>
+      <span class="text-[10px] text-amber-400 font-semibold">Priority Sequence</span>
+    </div>
+
+    <!-- Orders Queue Container -->
+    <div id="orders-container" class="flex-1 overflow-y-auto mt-1 space-y-1.5 pr-1 custom-scroll">
+      <div class="text-center py-6 text-slate-500 text-xs italic">
+        Awaiting orders from local shops...
+      </div>
+    </div>
+
+    <!-- Quick action buttons -->
+    <div class="pt-2 flex justify-between gap-1.5 border-t border-slate-800 text-[11px]">
+      <button id="btn-cam" class="flex-1 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-center font-bold transition">
+        📷 Cam View
+      </button>
+      <button id="btn-horn" class="flex-1 py-1.5 bg-amber-600/80 hover:bg-amber-600 text-white rounded-lg text-center font-bold transition">
+        📢 Honk Horn
+      </button>
+    </div>
+  </div>
+
+  <!-- Mobile On-Screen Controls -->
+  <div id="mobile-controls" class="fixed left-3 bottom-4 z-30 flex items-end space-x-4 md:hidden pointer-events-auto">
+    <div class="grid grid-cols-3 gap-1 bg-black/75 p-2 rounded-2xl border border-slate-800 backdrop-blur-md">
+      <div></div>
+      <button id="m-up" class="w-12 h-12 bg-slate-700 active:bg-emerald-600 text-white rounded-lg font-bold flex items-center justify-center text-xl shadow">▲</button>
+      <div></div>
+      <button id="m-left" class="w-12 h-12 bg-slate-700 active:bg-cyan-600 text-white rounded-lg font-bold flex items-center justify-center text-xl shadow">◀</button>
+      <button id="m-down" class="w-12 h-12 bg-slate-700 active:bg-rose-600 text-white rounded-lg font-bold flex items-center justify-center text-xl shadow">▼</button>
+      <button id="m-right" class="w-12 h-12 bg-slate-700 active:bg-cyan-600 text-white rounded-lg font-bold flex items-center justify-center text-xl shadow">▶</button>
+    </div>
+
+    <div class="flex flex-col space-y-2">
+      <button id="m-brake" class="w-14 h-12 bg-rose-700 active:bg-rose-500 text-white font-bold rounded-xl text-xs flex items-center justify-center uppercase shadow-lg">STOP</button>
+      <button id="m-horn-touch" class="w-14 h-10 bg-amber-600 active:bg-amber-500 text-white font-bold rounded-xl text-xs flex items-center justify-center shadow">HORN</button>
+    </div>
+  </div>
+
+  <div id="coin-float-container" class="absolute inset-0 pointer-events-none z-50 flex items-center justify-center overflow-hidden"></div>
+
+  <!-- Modal: Start Screen -->
+  <div id="modal-start" class="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+    <div class="max-w-md w-full bg-slate-900 border-2 border-emerald-500/60 rounded-3xl p-6 text-center shadow-2xl relative">
+      <div class="w-16 h-16 mx-auto mb-3 bg-gradient-to-tr from-emerald-600 to-teal-400 rounded-2xl flex items-center justify-center text-3xl shadow-lg border border-emerald-300">
+        🚗
+      </div>
+      <h1 class="font-ps1 text-4xl sm:text-5xl text-emerald-400 tracking-wider">PS1 COURIER RUSH</h1>
+      <p class="text-xs sm:text-sm text-slate-300 mt-2 leading-relaxed">
+        Drive through town with direct floating 3D waypoint navigation and deliver orders before your shift ends!
+      </p>
+
+      <div class="my-4 bg-slate-800/90 rounded-2xl p-4 text-left border border-slate-700 text-xs space-y-2">
+        <div class="flex items-center space-x-2 text-amber-300 font-bold">
+          <span>📦 Goal:</span>
+          <span>Complete 6 Priority Deliveries in 10 Minutes</span>
+        </div>
+        <div class="flex items-center space-x-2 text-cyan-300">
+          <span>🎯 Floating Arrow:</span>
+          <span>Follow the neon 3D arrow hovering right above your vehicle nose</span>
+        </div>
+        <div class="flex items-center space-x-2 text-emerald-300">
+          <span>💰 Reward:</span>
+          <span>+1 Gold Coin for every fulfilled priority sequence drop-off</span>
+        </div>
+        <div class="flex items-center space-x-2 text-slate-300">
+          <span>🕹 Controls:</span>
+          <span>WASD / Arrows to drive, Space to Brake, C for Cam, M for GPS</span>
+        </div>
+      </div>
+
+      <button id="btn-start-game" class="w-full py-3.5 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-black font-extrabold text-base rounded-xl uppercase tracking-wider shadow-lg transition active:scale-95">
+        Start 10-Minute Shift
+      </button>
+    </div>
+  </div>
+
+  <!-- Modal: Shift Summary / Finish -->
+  <div id="modal-end" class="fixed inset-0 z-50 bg-black/90 backdrop-blur-md hidden flex items-center justify-center p-4">
+    <div class="max-w-md w-full bg-slate-900 border-2 border-amber-500/80 rounded-3xl p-6 text-center shadow-2xl">
+      <div id="end-badge" class="w-16 h-16 mx-auto mb-2 bg-amber-500 rounded-2xl flex items-center justify-center text-3xl shadow-lg text-black font-black">
+        ★
+      </div>
+      <h2 id="end-title" class="font-ps1 text-4xl text-amber-400 tracking-wider">SHIFT COMPLETED!</h2>
+      <p id="end-desc" class="text-xs sm:text-sm text-slate-300 mt-1 mb-4 leading-relaxed">
+        Great work out there on the streets!
+      </p>
+
+      <div class="bg-slate-800/90 rounded-2xl p-4 border border-slate-700 text-left space-y-2 mb-5 text-xs">
+        <div class="flex justify-between">
+          <span class="text-slate-400">Total Deliveries:</span>
+          <span id="final-deliveries" class="font-bold text-cyan-400 text-sm">6 / 6</span>
+        </div>
+        <div class="flex justify-between">
+          <span class="text-slate-400">Coins Collected:</span>
+          <span id="final-coins" class="font-bold text-amber-400 text-sm">6 COINS</span>
+        </div>
+        <div class="flex justify-between">
+          <span class="text-slate-400">Time Remaining:</span>
+          <span id="final-time" class="font-bold text-emerald-400 text-sm">04:32</span>
+        </div>
+        <div class="flex justify-between">
+          <span class="text-slate-400">Driver Performance Rating:</span>
+          <span id="final-rating" class="font-bold text-yellow-300 text-sm">★★★★★</span>
+        </div>
+      </div>
+
+      <button id="btn-replay" class="w-full py-3.5 bg-amber-500 hover:bg-amber-400 text-black font-extrabold text-base rounded-xl uppercase tracking-wider shadow-lg transition active:scale-95">
+        Start New Shift
+      </button>
+    </div>
+  </div>
+
+  <script>
+    class RetroSoundSystem {
+      constructor() {
+        this.ctx = null;
+        this.engineOsc = null;
+        this.engineGain = null;
+        this.initialized = false;
+      }
+
+      init() {
+        if (this.initialized) return;
+        try {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          this.ctx = new AudioContext();
+          this.initEngineAudio();
+          this.initialized = true;
+        } catch (e) {
+          console.warn("Audio Context unavailable:", e);
+        }
+      }
+
+      initEngineAudio() {
+        if (!this.ctx) return;
+        this.engineOsc = this.ctx.createOscillator();
+        this.engineGain = this.ctx.createGain();
+        this.engineOsc.type = 'sawtooth';
+        this.engineOsc.frequency.setValueAtTime(45, this.ctx.currentTime);
+        this.engineGain.gain.setValueAtTime(0.04, this.ctx.currentTime);
+        
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(420, this.ctx.currentTime);
+
+        this.engineOsc.connect(filter);
+        filter.connect(this.engineGain);
+        this.engineGain.connect(this.ctx.destination);
+        this.engineOsc.start();
+      }
+
+      updateEnginePitch(speedRatio, isAccelerating) {
+        if (!this.ctx || !this.engineOsc) return;
+        const targetFreq = 40 + (speedRatio * 140) + (isAccelerating ? 25 : 0);
+        this.engineOsc.frequency.setTargetAtTime(targetFreq, this.ctx.currentTime, 0.1);
+        const targetVol = 0.03 + (speedRatio * 0.05) + (isAccelerating ? 0.03 : 0);
+        this.engineGain.gain.setTargetAtTime(targetVol, this.ctx.currentTime, 0.1);
+      }
+
+      playOrderPing() {
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(587.33, now);
+        osc.frequency.setValueAtTime(880, now + 0.1);
+        gain.gain.setValueAtTime(0.15, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.45);
+      }
+
+      playDeliveryFanfare() {
+        if (!this.ctx) return;
+        const notes = [523.25, 659.25, 783.99, 1046.50];
+        notes.forEach((freq, idx) => {
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          const startTime = this.ctx.currentTime + (idx * 0.09);
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(freq, startTime);
+          gain.gain.setValueAtTime(0.2, startTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.35);
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start(startTime);
+          osc.stop(startTime + 0.4);
+        });
+      }
+
+      playCoinSound() {
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(987.77, now);
+        osc.frequency.setValueAtTime(1318.51, now + 0.08);
+        gain.gain.setValueAtTime(0.22, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.55);
+      }
+
+      playHorn() {
+        if (!this.ctx) return;
+        const now = this.ctx.currentTime;
+        [349.23, 440].forEach(freq => {
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = 'sawtooth';
+          osc.frequency.setValueAtTime(freq, now);
+          gain.gain.setValueAtTime(0.12, now);
+          gain.gain.exponentialRampToValueAtTime(0.01, now + 0.35);
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start(now);
+          osc.stop(now + 0.36);
+        });
+      }
+    }
+
+    const audio = new RetroSoundSystem();
+
+    const CITY_SIZE = 400;
+
+    const SHOPS = [
+      { id: 's1', name: "Dragon Noodle Bar", x: -100, z: -100, color: '#f59e0b', emoji: '🍜', type: 'Shop' },
+      { id: 's2', name: "Retro Burger Drive", x: 100, z: -100, color: '#ef4444', emoji: '🍔', type: 'Shop' },
+      { id: 's3', name: "Pixel Pizza Oven", x: -100, z: 100, color: '#eab308', emoji: '🍕', type: 'Shop' },
+      { id: 's4', name: "Cyber Cafe & Boba", x: 100, z: 100, color: '#06b6d4', emoji: '🧋', type: 'Shop' },
+      { id: 's5', name: "Midnight Taco Express", x: 0, z: -120, color: '#ec4899', emoji: '🌮', type: 'Shop' },
+      { id: 's6', name: "8-Bit Bakery Treats", x: 0, z: 120, color: '#8b5cf6', emoji: '🥐', type: 'Shop' }
+    ];
+
+    const HOUSES = [
+      { id: 'h1', name: "Pine Street Apt 4B", x: -140, z: -40, color: '#10b981', emoji: '🏠', type: 'Customer' },
+      { id: 'h2', name: "Neon Boulevard Villa", x: 140, z: -40, color: '#10b981', emoji: '🏡', type: 'Customer' },
+      { id: 'h3', name: "Retro Crest Residencies", x: -40, z: 140, color: '#10b981', emoji: '🏢', type: 'Customer' },
+      { id: 'h4', name: "Metro Heights #7", x: 140, z: 40, color: '#10b981', emoji: '🏬', type: 'Customer' },
+      { id: 'h5', name: "Sunset Hill Cottage", x: -140, z: 40, color: '#10b981', emoji: '🏡', type: 'Customer' },
+      { id: 'h6', name: "Silicon Loft Suite 9", x: 40, z: -140, color: '#10b981', emoji: '🏠', type: 'Customer' }
+    ];
+
+    const gameState = {
+      started: false,
+      gameOver: false,
+      timeLeft: 600,
+      deliveriesGoal: 6,
+      deliveriesDone: 0,
+      coins: 0,
+      cameraMode: 'cockpit',
+      orders: [],
+      nextOrderNumber: 1,
+      totalOrdersSpawned: 0,
+      expandedGPS: false
+    };
+
+    const canvas = document.getElementById('game-canvas');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.2));
+    renderer.shadowMap.enabled = false;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0c111a);
+    scene.fog = new THREE.FogExp2(0x0c111a, 0.009);
+
+    const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 800);
+    
+    const ambientLight = new THREE.AmbientLight(0xdde5f0, 0.7);
+    scene.add(ambientLight);
+
+    const dirLight = new THREE.DirectionalLight(0xfff0c4, 0.85);
+    dirLight.position.set(70, 150, 50);
+    scene.add(dirLight);
+
+    // Ground plane
+    const groundGeo = new THREE.PlaneGeometry(CITY_SIZE * 1.5, CITY_SIZE * 1.5);
+    const groundMat = new THREE.MeshLambertMaterial({ color: 0x181e28, flatShading: true });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.05;
+    scene.add(ground);
+
+    function createRoads() {
+      const roadMat = new THREE.MeshLambertMaterial({ color: 0x242a36, flatShading: true });
+      const roadMarkingMat = new THREE.MeshBasicMaterial({ color: 0xfacc15 });
+
+      for (let i = -150; i <= 150; i += 50) {
+        const hRoad = new THREE.Mesh(new THREE.PlaneGeometry(CITY_SIZE, 12), roadMat);
+        hRoad.rotation.x = -Math.PI / 2;
+        hRoad.position.set(0, 0.01, i);
+        scene.add(hRoad);
+
+        for (let d = -180; d <= 180; d += 16) {
+          const dash = new THREE.Mesh(new THREE.PlaneGeometry(4, 0.6), roadMarkingMat);
+          dash.rotation.x = -Math.PI / 2;
+          dash.position.set(d, 0.02, i);
+          scene.add(dash);
+        }
+
+        const vRoad = new THREE.Mesh(new THREE.PlaneGeometry(12, CITY_SIZE), roadMat);
+        vRoad.rotation.x = -Math.PI / 2;
+        vRoad.position.set(i, 0.01, 0);
+        scene.add(vRoad);
+
+        for (let d = -180; d <= 180; d += 16) {
+          const dash = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 4), roadMarkingMat);
+          dash.rotation.x = -Math.PI / 2;
+          dash.position.set(i, 0.02, d);
+          scene.add(dash);
+        }
+      }
+    }
+    createRoads();
+
+    const buildingPalette = [0x334155, 0x475569, 0x1e293b, 0x3f3f46, 0x27272a, 0x52525b];
+    const solidBuildings = [];
+
+    function populateCity() {
+      for (let bx = -175; bx <= 175; bx += 50) {
+        for (let bz = -175; bz <= 175; bz += 50) {
+          if (Math.abs(bx % 50) === 0 || Math.abs(bz % 50) === 0) continue;
+
+          const nearShop = SHOPS.some(s => Math.hypot(s.x - bx, s.z - bz) < 25);
+          const nearHouse = HOUSES.some(h => Math.hypot(h.x - bx, h.z - bz) < 25);
+          if (nearShop || nearHouse) continue;
+
+          const h = 20 + Math.random() * 65;
+          const w = 24 + Math.random() * 8;
+          const d = 24 + Math.random() * 8;
+          const color = buildingPalette[Math.floor(Math.random() * buildingPalette.length)];
+          const bMat = new THREE.MeshLambertMaterial({ color, flatShading: true });
+          const bGeo = new THREE.BoxGeometry(w, h, d);
+          const building = new THREE.Mesh(bGeo, bMat);
+          building.position.set(bx, h / 2, bz);
+          scene.add(building);
+
+          // Solid obstacle bounding box
+          solidBuildings.push({
+            minX: bx - w / 2,
+            maxX: bx + w / 2,
+            minZ: bz - d / 2,
+            maxZ: bz + d / 2,
+            cx: bx,
+            cz: bz
+          });
+
+          if (Math.random() > 0.3) {
+            const winGeo = new THREE.BoxGeometry(w + 0.2, 1.8, d + 0.2);
+            const winMat = new THREE.MeshBasicMaterial({ color: 0xffe27d });
+            const win = new THREE.Mesh(winGeo, winMat);
+            win.position.set(bx, h * 0.6, bz);
+            scene.add(win);
+          }
+        }
+      }
+
+      // Render Shop nodes
+      SHOPS.forEach(shop => {
+        const group = new THREE.Group();
+        const baseMat = new THREE.MeshLambertMaterial({ color: 0x1e293b, flatShading: true });
+        const base = new THREE.Mesh(new THREE.BoxGeometry(22, 14, 22), baseMat);
+        base.position.y = 7;
+        group.add(base);
+
+        const roofMat = new THREE.MeshLambertMaterial({ color: shop.color, flatShading: true });
+        const roof = new THREE.Mesh(new THREE.BoxGeometry(20, 3, 20), roofMat);
+        roof.position.y = 15;
+        group.add(roof);
+
+        const signGeo = new THREE.BoxGeometry(8, 4, 1);
+        const signMat = new THREE.MeshBasicMaterial({ color: shop.color });
+        const sign = new THREE.Mesh(signGeo, signMat);
+        sign.position.set(0, 19, 0);
+        group.add(sign);
+
+        group.position.set(shop.x, 0, shop.z);
+        scene.add(group);
+      });
+
+      // Render Customer Houses
+      HOUSES.forEach(house => {
+        const group = new THREE.Group();
+        const walls = new THREE.Mesh(
+          new THREE.BoxGeometry(16, 10, 16),
+          new THREE.MeshLambertMaterial({ color: 0x475569, flatShading: true })
+        );
+        walls.position.y = 5;
+        group.add(walls);
+
+        const roof = new THREE.Mesh(
+          new THREE.ConeGeometry(13, 8, 4),
+          new THREE.MeshLambertMaterial({ color: 0x991b1b, flatShading: true })
+        );
+        roof.position.y = 14;
+        roof.rotation.y = Math.PI / 4;
+        group.add(roof);
+
+        group.position.set(house.x, 0, house.z);
+        scene.add(group);
+      });
+
+      // Street posts
+      for (let x = -150; x <= 150; x += 50) {
+        for (let z = -150; z <= 150; z += 50) {
+          if (Math.abs(x) === 150 && Math.abs(z) === 150) continue;
+          const pole = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.2, 0.3, 10, 5),
+            new THREE.MeshLambertMaterial({ color: 0x64748b, flatShading: true })
+          );
+          pole.position.set(x + 7, 5, z + 7);
+          scene.add(pole);
+
+          const bulb = new THREE.Mesh(
+            new THREE.SphereGeometry(0.7, 6, 4),
+            new THREE.MeshBasicMaterial({ color: 0xfff3b0 })
+          );
+          bulb.position.set(x + 7, 10, z + 7);
+          scene.add(bulb);
+        }
+      }
+    }
+    populateCity();
+
+    const car = new THREE.Group();
+    scene.add(car);
+
+    const carPhysics = {
+      x: 0,
+      z: 0,
+      angle: 0,
+      speed: 0,
+      maxForwardSpeed: 65,
+      maxReverseSpeed: -25,
+      accel: 48,
+      brake: 80,
+      friction: 16,
+      steerAngle: 0,
+      maxSteer: 1.25,
+      steerSpeed: 7.5,
+      wheelBase: 1.6
+    };
+
+    let steeringWheelMesh = null;
+    let interiorPhoneMesh = null;
+
+    function buildVehicle() {
+      // Exterior chassis
+      const bodyMat = new THREE.MeshLambertMaterial({ color: 0x0284c7, flatShading: true });
+      const chassis = new THREE.Mesh(new THREE.BoxGeometry(3.2, 1.4, 6.2), bodyMat);
+      chassis.position.y = 1.0;
+      car.add(chassis);
+
+      // Windshield & Roof
+      const glassMat = new THREE.MeshLambertMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.7, flatShading: true });
+      const cabin = new THREE.Mesh(new THREE.BoxGeometry(2.8, 1.3, 3.4), glassMat);
+      cabin.position.set(0, 2.1, -0.4);
+      car.add(cabin);
+
+      // Headlights & Tail Lights
+      const hlGeo = new THREE.BoxGeometry(0.7, 0.4, 0.2);
+      const hlMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+      const hlLeft = new THREE.Mesh(hlGeo, hlMat);
+      hlLeft.position.set(-1.1, 1.0, 3.1);
+      const hlRight = hlLeft.clone();
+      hlRight.position.set(1.1, 1.0, 3.1);
+      car.add(hlLeft, hlRight);
+
+      const tlMat = new THREE.MeshBasicMaterial({ color: 0xef4444 });
+      const tlLeft = new THREE.Mesh(hlGeo, tlMat);
+      tlLeft.position.set(-1.1, 1.0, -3.1);
+      const tlRight = tlLeft.clone();
+      tlRight.position.set(1.1, 1.0, -3.1);
+      car.add(tlLeft, tlRight);
+
+      // Low poly wheels
+      const wheelMat = new THREE.MeshLambertMaterial({ color: 0x111827, flatShading: true });
+      const wheelGeo = new THREE.CylinderGeometry(0.7, 0.7, 0.5, 8);
+      wheelGeo.rotateZ(Math.PI / 2);
+      
+      const wheelPositions = [
+        [-1.6, 0.7, 1.9],
+        [1.6, 0.7, 1.9],
+        [-1.6, 0.7, -1.9],
+        [1.6, 0.7, -1.9]
+      ];
+      wheelPositions.forEach(pos => {
+        const w = new THREE.Mesh(wheelGeo, wheelMat);
+        w.position.set(...pos);
+        car.add(w);
+      });
+
+      // Interior Cockpit Dashboard & Steering Wheel
+      const interiorGroup = new THREE.Group();
+      interiorGroup.name = "cockpitInterior";
+
+      const dashGeo = new THREE.BoxGeometry(2.6, 0.6, 1.2);
+      const dashMat = new THREE.MeshLambertMaterial({ color: 0x181a20, flatShading: true });
+      const dashboard = new THREE.Mesh(dashGeo, dashMat);
+      dashboard.position.set(0, 1.6, 0.85);
+      interiorGroup.add(dashboard);
+
+      const wheelTorus = new THREE.Mesh(
+        new THREE.TorusGeometry(0.42, 0.07, 4, 10),
+        new THREE.MeshLambertMaterial({ color: 0x334155, flatShading: true })
+      );
+      wheelTorus.position.set(-0.65, 1.78, 0.45);
+      wheelTorus.rotation.x = THREE.MathUtils.degToRad(-25);
+      interiorGroup.add(wheelTorus);
+      steeringWheelMesh = wheelTorus;
+
+      const phoneGeo = new THREE.BoxGeometry(0.55, 0.85, 0.08);
+      const phoneMat = new THREE.MeshBasicMaterial({ color: 0x064e3b });
+      interiorPhoneMesh = new THREE.Mesh(phoneGeo, phoneMat);
+      interiorPhoneMesh.position.set(0.45, 1.85, 0.6);
+      interiorPhoneMesh.rotation.y = THREE.MathUtils.degToRad(-15);
+      interiorPhoneMesh.rotation.x = THREE.MathUtils.degToRad(-15);
+      interiorGroup.add(interiorPhoneMesh);
+
+      car.add(interiorGroup);
+    }
+    buildVehicle();
+
+    // 1. Prominent 3D Floating Arcade Arrow directly in front of the vehicle hood/windshield
+    const floatingArrowRoot = new THREE.Group();
+    scene.add(floatingArrowRoot);
+
+    // Dynamic 3D Neon Arrow Assembly
+    const navArrowMeshGroup = new THREE.Group();
+    floatingArrowRoot.add(navArrowMeshGroup);
+
+    // Arrow Head Cone
+    const arrowHeadGeo = new THREE.ConeGeometry(0.7, 1.8, 6);
+    arrowHeadGeo.rotateX(Math.PI / 2); // Point forward along +Z
+    const navArrowMat = new THREE.MeshBasicMaterial({ color: 0xfacc15, wireframe: false });
+    const arrowHead = new THREE.Mesh(arrowHeadGeo, navArrowMat);
+    arrowHead.position.z = 1.0;
+    navArrowMeshGroup.add(arrowHead);
+
+    // Arrow Shaft Box
+    const arrowShaftGeo = new THREE.BoxGeometry(0.4, 0.35, 1.4);
+    const arrowShaft = new THREE.Mesh(arrowShaftGeo, navArrowMat);
+    arrowShaft.position.z = -0.4;
+    navArrowMeshGroup.add(arrowShaft);
+
+    // Pulsing outer halo ring
+    const haloGeo = new THREE.TorusGeometry(0.9, 0.06, 4, 12);
+    const haloMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 });
+    const arrowHalo = new THREE.Mesh(haloGeo, haloMat);
+    arrowHalo.rotation.x = Math.PI / 2;
+    navArrowMeshGroup.add(arrowHalo);
+
+    // Road-level holographic breadcrumb chevrons projecting ahead of vehicle
+    const CHEVRON_COUNT = 4;
+    const roadChevrons = [];
+    const chevronGeo = new THREE.ConeGeometry(0.5, 1.0, 3);
+    chevronGeo.rotateX(Math.PI / 2);
+    const chevronMat = new THREE.MeshBasicMaterial({ color: 0xfacc15, transparent: true, opacity: 0.75 });
+
+    for (let c = 0; c < CHEVRON_COUNT; c++) {
+      const ch = new THREE.Mesh(chevronGeo, chevronMat);
+      ch.position.y = 0.15;
+      scene.add(ch);
+      roadChevrons.push(ch);
+    }
+
+    const beaconGroup = new THREE.Group();
+    scene.add(beaconGroup);
+
+    const beaconGeo = new THREE.CylinderGeometry(1.6, 2.5, 38, 8, 1, true);
+    const beaconMat = new THREE.MeshBasicMaterial({
+      color: 0xf59e0b,
+      transparent: true,
+      opacity: 0.45,
+      side: THREE.DoubleSide
+    });
+    const beaconCylinder = new THREE.Mesh(beaconGeo, beaconMat);
+    beaconCylinder.position.y = 19;
+    beaconGroup.add(beaconCylinder);
+
+    const ringGeo = new THREE.RingGeometry(3.5, 5.0, 16);
+    ringGeo.rotateX(-Math.PI / 2);
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xf59e0b, side: THREE.DoubleSide });
+    const beaconRing = new THREE.Mesh(ringGeo, ringMat);
+    beaconRing.position.y = 0.2;
+    beaconGroup.add(beaconRing);
+
+    const diamondGeo = new THREE.OctahedronGeometry(2.4, 0);
+    const diamondMat = new THREE.MeshLambertMaterial({ color: 0xfde047, flatShading: true });
+    const diamondMesh = new THREE.Mesh(diamondGeo, diamondMat);
+    diamondMesh.position.y = 22;
+    beaconGroup.add(diamondMesh);
+
+    function updateBeaconVisuals(target) {
+      if (!target) {
+        beaconGroup.visible = false;
+        return;
+      }
+      beaconGroup.visible = true;
+      beaconGroup.position.set(target.x, 0, target.z);
+
+      const isPickup = target.type === 'Shop';
+      const col = isPickup ? 0xf59e0b : 0x10b981;
+      beaconMat.color.setHex(col);
+      ringMat.color.setHex(col);
+      diamondMat.color.setHex(col);
+    }
+
+    const keys = {
+      forward: false,
+      backward: false,
+      left: false,
+      right: false,
+      brake: false
+    };
+
+    window.addEventListener('keydown', (e) => {
+      audio.init();
+      switch (e.code) {
+        case 'KeyW':
+        case 'ArrowUp':
+          keys.forward = true;
+          break;
+        case 'KeyS':
+        case 'ArrowDown':
+          keys.backward = true;
+          break;
+        case 'KeyA':
+        case 'ArrowLeft':
+          keys.left = true;
+          break;
+        case 'KeyD':
+        case 'ArrowRight':
+          keys.right = true;
+          break;
+        case 'Space':
+          keys.brake = true;
+          break;
+        case 'KeyC':
+          toggleCamera();
+          break;
+        case 'KeyM':
+        case 'Tab':
+          e.preventDefault();
+          toggleGPSSize();
+          break;
+        case 'KeyH':
+          audio.playHorn();
+          break;
+      }
+    });
+
+    window.addEventListener('keyup', (e) => {
+      switch (e.code) {
+        case 'KeyW':
+        case 'ArrowUp':
+          keys.forward = false;
+          break;
+        case 'KeyS':
+        case 'ArrowDown':
+          keys.backward = false;
+          break;
+        case 'KeyA':
+        case 'ArrowLeft':
+          keys.left = false;
+          break;
+        case 'KeyD':
+        case 'ArrowRight':
+          keys.right = false;
+          break;
+        case 'Space':
+          keys.brake = false;
+          break;
+      }
+    });
+
+    function setupTouchButton(id, keyName) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const activate = (e) => {
+        e.preventDefault();
+        audio.init();
+        keys[keyName] = true;
+      };
+      const deactivate = (e) => {
+        e.preventDefault();
+        keys[keyName] = false;
+      };
+      el.addEventListener('touchstart', activate);
+      el.addEventListener('touchend', deactivate);
+      el.addEventListener('mousedown', activate);
+      el.addEventListener('mouseup', deactivate);
+      el.addEventListener('mouseleave', deactivate);
+    }
+
+    setupTouchButton('m-up', 'forward');
+    setupTouchButton('m-down', 'backward');
+    setupTouchButton('m-left', 'left');
+    setupTouchButton('m-right', 'right');
+    setupTouchButton('m-brake', 'brake');
+
+    document.getElementById('m-horn-touch').addEventListener('click', () => {
+      audio.init();
+      audio.playHorn();
+    });
+    document.getElementById('btn-horn').addEventListener('click', () => {
+      audio.init();
+      audio.playHorn();
+    });
+    document.getElementById('btn-cam').addEventListener('click', toggleCamera);
+    document.getElementById('btn-toggle-phone-size').addEventListener('click', toggleGPSSize);
+
+    function toggleCamera() {
+      gameState.cameraMode = gameState.cameraMode === 'cockpit' ? 'third' : 'cockpit';
+    }
+
+    function toggleGPSSize() {
+      const phone = document.getElementById('dash-phone');
+      gameState.expandedGPS = !gameState.expandedGPS;
+      if (gameState.expandedGPS) {
+        phone.classList.remove('w-72', 'sm:w-80', 'h-96', 'sm:h-[430px]');
+        phone.classList.add('w-[92vw]', 'max-w-md', 'h-[80vh]');
+      } else {
+        phone.classList.remove('w-[92vw]', 'max-w-md', 'h-[80vh]');
+        phone.classList.add('w-72', 'sm:w-80', 'h-96', 'sm:h-[430px]');
+      }
+    }
+
+    function spawnOrder() {
+      if (gameState.orders.length >= 3) return;
+      if (gameState.totalOrdersSpawned >= 14) return;
+
+      const shop = SHOPS[Math.floor(Math.random() * SHOPS.length)];
+      let house = HOUSES[Math.floor(Math.random() * HOUSES.length)];
+      while (house.id === shop.id) {
+        house = HOUSES[Math.floor(Math.random() * HOUSES.length)];
+      }
+
+      const priorityNum = gameState.nextOrderNumber++;
+      gameState.totalOrdersSpawned++;
+
+      const newOrder = {
+        id: 'ord-' + Date.now() + '-' + Math.floor(Math.random() * 100),
+        priorityNumber: priorityNum,
+        shop: shop,
+        house: house,
+        status: 'pickup',
+        pickedUp: false
+      };
+
+      gameState.orders.push(newOrder);
+      renderOrderList();
+      audio.playOrderPing();
+
+      const phone = document.getElementById('dash-phone');
+      phone.classList.remove('phone-alert');
+      void phone.offsetWidth;
+      phone.classList.add('phone-alert');
+    }
+
+    function getActivePriorityOrder() {
+      if (gameState.orders.length === 0) return null;
+      return gameState.orders.reduce((prev, curr) => (prev.priorityNumber < curr.priorityNumber ? prev : curr));
+    }
+
+    function renderOrderList() {
+      const container = document.getElementById('orders-container');
+      const badge = document.getElementById('queue-badge');
+      badge.textContent = `${gameState.orders.length}/3`;
+
+      if (gameState.orders.length === 0) {
+        container.innerHTML = `
+          <div class="text-center py-6 text-slate-500 text-xs italic">
+            All caught up! Waiting for next dispatch...
+          </div>
+        `;
+        return;
+      }
+
+      const sorted = [...gameState.orders].sort((a, b) => a.priorityNumber - b.priorityNumber);
+      const activeOrder = getActivePriorityOrder();
+
+      container.innerHTML = sorted.map((order) => {
+        const isActive = activeOrder && activeOrder.id === order.id;
+        const targetDesc = order.status === 'pickup' 
+          ? `Collect at: ${order.shop.emoji} ${order.shop.name}` 
+          : `Deliver to: ${order.house.emoji} ${order.house.name}`;
+
+        const badgeColor = isActive 
+          ? 'bg-amber-500 text-black font-extrabold animate-pulse' 
+          : 'bg-slate-700 text-slate-300';
+
+        const borderColor = isActive ? 'border-amber-400/80 bg-slate-800/90' : 'border-slate-700/50 bg-slate-900/60';
+
+        return `
+          <div class="p-2.5 rounded-xl border ${borderColor} transition-all relative">
+            <div class="flex items-center justify-between">
+              <span class="text-[10px] px-2 py-0.5 rounded-full ${badgeColor}">
+                PRIORITY #${order.priorityNumber}
+              </span>
+              <span class="text-[11px] font-mono ${order.status === 'pickup' ? 'text-amber-400' : 'text-emerald-400'} font-bold">
+                ${order.status === 'pickup' ? '● GO TO SHOP' : '★ ON ROUTE'}
+              </span>
+            </div>
+            <div class="mt-1.5 text-xs text-white font-medium flex items-center gap-1.5">
+              <span>${targetDesc}</span>
+            </div>
+            ${isActive ? `
+              <div class="mt-1 text-[9px] text-amber-300 flex items-center justify-between">
+                <span>Active Target Destination</span>
+                <span>Seq #1 Req</span>
+              </div>
+            ` : `
+              <div class="mt-1 text-[9px] text-slate-400">
+                Awaiting sequence #1 completion
+              </div>
+            `}
+          </div>
+        `;
+      }).join('');
+    }
+
+    const gpsCanvas = document.getElementById('gps-canvas');
+    const gpsCtx = gpsCanvas.getContext('2d');
+
+    function drawGPSRadar() {
+      if (gpsCanvas.width !== gpsCanvas.clientWidth || gpsCanvas.height !== gpsCanvas.clientHeight) {
+        gpsCanvas.width = gpsCanvas.clientWidth;
+        gpsCanvas.height = gpsCanvas.clientHeight;
+      }
+
+      const w = gpsCanvas.width;
+      const h = gpsCanvas.height;
+
+      gpsCtx.fillStyle = '#0b1320';
+      gpsCtx.fillRect(0, 0, w, h);
+
+      const scale = w / (CITY_SIZE * 1.1);
+      const cx = w / 2;
+      const cy = h / 2;
+
+      function toRadarX(worldX) { return cx + worldX * scale; }
+      function toRadarY(worldZ) { return cy + worldZ * scale; }
+
+      // Road Grid
+      gpsCtx.strokeStyle = '#1e293b';
+      gpsCtx.lineWidth = 6;
+      for (let i = -150; i <= 150; i += 50) {
+        gpsCtx.beginPath();
+        gpsCtx.moveTo(toRadarX(-180), toRadarY(i));
+        gpsCtx.lineTo(toRadarX(180), toRadarY(i));
+        gpsCtx.stroke();
+
+        gpsCtx.beginPath();
+        gpsCtx.moveTo(toRadarX(i), toRadarY(-180));
+        gpsCtx.lineTo(toRadarX(i), toRadarY(180));
+        gpsCtx.stroke();
+      }
+
+      // POI Markers
+      SHOPS.forEach(shop => {
+        gpsCtx.fillStyle = shop.color;
+        gpsCtx.beginPath();
+        gpsCtx.arc(toRadarX(shop.x), toRadarY(shop.z), 4, 0, Math.PI * 2);
+        gpsCtx.fill();
+      });
+
+      HOUSES.forEach(house => {
+        gpsCtx.fillStyle = house.color;
+        gpsCtx.fillRect(toRadarX(house.x) - 3, toRadarY(house.z) - 3, 6, 6);
+      });
+
+      // Active Target Route
+      const activeOrder = getActivePriorityOrder();
+      if (activeOrder) {
+        const dest = activeOrder.status === 'pickup' ? activeOrder.shop : activeOrder.house;
+        gpsCtx.strokeStyle = activeOrder.status === 'pickup' ? '#f59e0b' : '#10b981';
+        gpsCtx.lineWidth = 2;
+        gpsCtx.setLineDash([4, 4]);
+        gpsCtx.beginPath();
+        gpsCtx.moveTo(toRadarX(carPhysics.x), toRadarY(carPhysics.z));
+        gpsCtx.lineTo(toRadarX(dest.x), toRadarY(dest.z));
+        gpsCtx.stroke();
+        gpsCtx.setLineDash([]);
+
+        gpsCtx.strokeStyle = activeOrder.status === 'pickup' ? '#fbbf24' : '#34d399';
+        gpsCtx.lineWidth = 2;
+        gpsCtx.beginPath();
+        const pulse = 6 + (Math.sin(Date.now() * 0.008) * 3);
+        gpsCtx.arc(toRadarX(dest.x), toRadarY(dest.z), pulse, 0, Math.PI * 2);
+        gpsCtx.stroke();
+      }
+
+      // Vehicle Location Arrow
+      const px = toRadarX(carPhysics.x);
+      const py = toRadarY(carPhysics.z);
+      gpsCtx.save();
+      gpsCtx.translate(px, py);
+      gpsCtx.rotate(-carPhysics.angle + Math.PI / 2);
+
+      gpsCtx.fillStyle = '#38bdf8';
+      gpsCtx.beginPath();
+      gpsCtx.moveTo(0, -7);
+      gpsCtx.lineTo(5, 7);
+      gpsCtx.lineTo(-5, 7);
+      gpsCtx.closePath();
+      gpsCtx.fill();
+
+      gpsCtx.strokeStyle = 'rgba(56, 189, 248, 0.4)';
+      gpsCtx.lineWidth = 1.5;
+      gpsCtx.beginPath();
+      gpsCtx.moveTo(0, 0);
+      gpsCtx.lineTo(0, -18);
+      gpsCtx.stroke();
+      gpsCtx.restore();
+    }
+
+    function updatePhysics(dt) {
+      if (keys.forward) {
+        carPhysics.speed = Math.min(carPhysics.speed + carPhysics.accel * dt, carPhysics.maxForwardSpeed);
+      } else if (keys.backward) {
+        carPhysics.speed = Math.max(carPhysics.speed - carPhysics.accel * dt, carPhysics.maxReverseSpeed);
+      } else {
+        if (carPhysics.speed > 0) {
+          carPhysics.speed = Math.max(carPhysics.speed - carPhysics.friction * dt, 0);
+        } else if (carPhysics.speed < 0) {
+          carPhysics.speed = Math.min(carPhysics.speed + carPhysics.friction * dt, 0);
+        }
+      }
+
+      if (keys.brake) {
+        if (carPhysics.speed > 0) {
+          carPhysics.speed = Math.max(carPhysics.speed - carPhysics.brake * dt, 0);
+        } else if (carPhysics.speed < 0) {
+          carPhysics.speed = Math.min(carPhysics.speed + carPhysics.brake * dt, 0);
+        }
+      }
+
+      const steerInput = (keys.left ? 1 : 0) - (keys.right ? 1 : 0);
+      const targetSteer = steerInput * carPhysics.maxSteer;
+      carPhysics.steerAngle += (targetSteer - carPhysics.steerAngle) * carPhysics.steerSpeed * dt;
+
+      if (Math.abs(carPhysics.speed) > 0.05) {
+        const directionMultiplier = carPhysics.speed >= 0 ? 1 : -1;
+        carPhysics.angle += carPhysics.steerAngle * (Math.abs(carPhysics.speed) / carPhysics.wheelBase) * dt * 0.16 * directionMultiplier;
+      } else if (Math.abs(steerInput) > 0 && Math.abs(carPhysics.speed) <= 0.05) {
+        carPhysics.angle += steerInput * dt * 0.8;
+      }
+
+      let nextX = carPhysics.x + Math.sin(carPhysics.angle) * carPhysics.speed * dt;
+      let nextZ = carPhysics.z + Math.cos(carPhysics.angle) * carPhysics.speed * dt;
+
+      // Solid obstacle collisions (Regular buildings are solid; shops/houses remain permeable)
+      const vehicleRadius = 1.6;
+      for (let i = 0; i < solidBuildings.length; i++) {
+        const b = solidBuildings[i];
+        if (Math.abs(nextX - b.cx) < 25 && Math.abs(nextZ - b.cz) < 25) {
+          const closestX = Math.max(b.minX, Math.min(nextX, b.maxX));
+          const closestZ = Math.max(b.minZ, Math.min(nextZ, b.maxZ));
+
+          const diffX = nextX - closestX;
+          const diffZ = nextZ - closestZ;
+          const distSq = diffX * diffX + diffZ * diffZ;
+
+          if (distSq < vehicleRadius * vehicleRadius) {
+            const dist = Math.sqrt(distSq);
+            let normX = dist > 0.001 ? diffX / dist : 0;
+            let normZ = dist > 0.001 ? diffZ / dist : 1;
+
+            if (dist <= 0.001) {
+              const dMinX = Math.abs(nextX - b.minX);
+              const dMaxX = Math.abs(b.maxX - nextX);
+              const dMinZ = Math.abs(nextZ - b.minZ);
+              const dMaxZ = Math.abs(b.maxZ - nextZ);
+              const minVal = Math.min(dMinX, dMaxX, dMinZ, dMaxZ);
+              if (minVal === dMinX) { normX = -1; normZ = 0; }
+              else if (minVal === dMaxX) { normX = 1; normZ = 0; }
+              else if (minVal === dMinZ) { normX = 0; normZ = -1; }
+              else { normX = 0; normZ = 1; }
+            }
+
+            const penetration = vehicleRadius - dist;
+            nextX += normX * penetration;
+            nextZ += normZ * penetration;
+            carPhysics.speed *= 0.35;
+          }
+        }
+      }
+
+      carPhysics.x = nextX;
+      carPhysics.z = nextZ;
+
+      const limit = CITY_SIZE / 2 - 10;
+      carPhysics.x = Math.max(-limit, Math.min(limit, carPhysics.x));
+      carPhysics.z = Math.max(-limit, Math.min(limit, carPhysics.z));
+
+      car.position.set(carPhysics.x, 0, carPhysics.z);
+      car.rotation.y = carPhysics.angle;
+
+      if (steeringWheelMesh) {
+        steeringWheelMesh.rotation.z = -carPhysics.steerAngle * 1.5;
+      }
+
+      const absMph = Math.round(Math.abs(carPhysics.speed));
+      document.getElementById('speedo-val').textContent = absMph;
+      document.getElementById('gear-indicator').textContent = 
+        carPhysics.speed < -1 ? 'GEAR: R' : (carPhysics.speed > 1 ? 'GEAR: D' : 'GEAR: P');
+      
+      const rpmPercent = Math.min(100, (absMph / carPhysics.maxForwardSpeed) * 100);
+      document.getElementById('rpm-bar').style.width = `${rpmPercent}%`;
+
+      audio.updateEnginePitch(absMph / carPhysics.maxForwardSpeed, keys.forward);
+
+      checkDeliveryProximity();
+    }
+
+    function checkDeliveryProximity() {
+      const activeOrder = getActivePriorityOrder();
+      const indicator = document.getElementById('target-beacon-text');
+      const compassNeedle = document.getElementById('compass-needle');
+      const navLabel = document.getElementById('nav-label');
+      const navDist = document.getElementById('nav-dist');
+      const navDestName = document.getElementById('nav-dest-name');
+
+      if (!activeOrder) {
+        updateBeaconVisuals(null);
+        floatingArrowRoot.visible = false;
+        roadChevrons.forEach(ch => ch.visible = false);
+        indicator.textContent = 'Awaiting Next Shift Order...';
+        navLabel.textContent = 'NO ACTIVE TARGET';
+        navDist.textContent = '--';
+        navDestName.textContent = 'Awaiting shop dispatch...';
+        compassNeedle.style.transform = 'rotate(0deg)';
+        return;
+      }
+
+      const isPickup = activeOrder.status === 'pickup';
+      const targetPoint = isPickup ? activeOrder.shop : activeOrder.house;
+      updateBeaconVisuals(targetPoint);
+
+      const dx = targetPoint.x - carPhysics.x;
+      const dz = targetPoint.z - carPhysics.z;
+      const dist = Math.hypot(dx, dz);
+      const roundedDist = Math.round(dist);
+
+      indicator.textContent = isPickup 
+        ? `[Priority #${activeOrder.priorityNumber}] Pick up at ${activeOrder.shop.name} (${roundedDist}m)` 
+        : `[Priority #${activeOrder.priorityNumber}] Deliver to ${activeOrder.house.name} (${roundedDist}m)`;
+
+      // Target world heading angle
+      const worldTargetAngle = Math.atan2(dx, dz);
+
+      // Relative angle for 2D bottom compass needle
+      let relativeAngle = worldTargetAngle - carPhysics.angle;
+      relativeAngle = Math.atan2(Math.sin(relativeAngle), Math.cos(relativeAngle));
+      const deg = relativeAngle * (180 / Math.PI);
+      compassNeedle.style.transform = `rotate(${deg}deg)`;
+
+      navLabel.textContent = isPickup ? `SEQ #${activeOrder.priorityNumber}: PICKUP` : `SEQ #${activeOrder.priorityNumber}: DROP-OFF`;
+      navDist.textContent = `${roundedDist}m`;
+      navDestName.textContent = `${isPickup ? activeOrder.shop.emoji : activeOrder.house.emoji} ${isPickup ? activeOrder.shop.name : activeOrder.house.name}`;
+
+      // Update 3D Floating Arcade Navigation Arrow hovering right above car hood/windshield
+      floatingArrowRoot.visible = true;
+      const arrowHoverDistance = 5.2; // Hovering right above the vehicle nose
+      const arrowElevation = 2.85;
+
+      const arrowWorldX = carPhysics.x + Math.sin(carPhysics.angle) * arrowHoverDistance;
+      const arrowWorldZ = carPhysics.z + Math.cos(carPhysics.angle) * arrowHoverDistance;
+      const hoverBob = Math.sin(performance.now() * 0.007) * 0.22;
+
+      floatingArrowRoot.position.set(arrowWorldX, arrowElevation + hoverBob, arrowWorldZ);
+      // Smoothly point directly toward the target destination
+      floatingArrowRoot.rotation.y = worldTargetAngle;
+
+      // Color coding: Golden Amber for Shop pickup, Neon Emerald for Customer dropoff
+      const arrowColor = isPickup ? 0xfacc15 : 0x10b981;
+      navArrowMat.color.setHex(arrowColor);
+      chevronMat.color.setHex(arrowColor);
+
+      // Update holographic road chevrons projected along the forward road
+      for (let c = 0; c < CHEVRON_COUNT; c++) {
+        const offset = 7 + (c * 6.5) + ((performance.now() * 0.015) % 6.5);
+        const chX = carPhysics.x + Math.sin(worldTargetAngle) * offset;
+        const chZ = carPhysics.z + Math.cos(worldTargetAngle) * offset;
+        const ch = roadChevrons[c];
+        ch.visible = true;
+        ch.position.set(chX, 0.15, chZ);
+        ch.rotation.y = worldTargetAngle;
+        ch.scale.setScalar(1.0 - (c * 0.15));
+      }
+
+      // Proximity Trigger within 10 meters
+      if (dist < 10) {
+        if (isPickup) {
+          activeOrder.status = 'delivering';
+          activeOrder.pickedUp = true;
+          audio.playOrderPing();
+          spawnCoinPopup("+ PARCEL COLLECTED!", '#38bdf8');
+          renderOrderList();
+        } else {
+          completeDelivery(activeOrder);
+        }
+      }
+    }
+
+    function completeDelivery(completedOrder) {
+      gameState.orders = gameState.orders.filter(o => o.id !== completedOrder.id);
+      gameState.deliveriesDone++;
+      gameState.coins += 1;
+
+      audio.playDeliveryFanfare();
+      setTimeout(() => audio.playCoinSound(), 200);
+      spawnCoinPopup("+1 GOLD COIN!", '#facc15');
+
+      document.getElementById('quota-display').textContent = `${gameState.deliveriesDone} / ${gameState.deliveriesGoal}`;
+      document.getElementById('coin-display').textContent = `${gameState.coins} COINS`;
+
+      renderOrderList();
+
+      if (gameState.deliveriesDone >= gameState.deliveriesGoal) {
+        endShift(true);
+      }
+    }
+
+    function spawnCoinPopup(text, colorHex) {
+      const container = document.getElementById('coin-float-container');
+      const pop = document.createElement('div');
+      pop.className = 'absolute font-ps1 text-3xl sm:text-4xl coin-pop font-bold drop-shadow-md';
+      pop.style.color = colorHex;
+      pop.textContent = text;
+      container.appendChild(pop);
+      setTimeout(() => pop.remove(), 1600);
+    }
+
+    function updateCamera() {
+      if (gameState.cameraMode === 'cockpit') {
+        const driverOffset = new THREE.Vector3(-0.65, 2.2, 0.4);
+        driverOffset.applyAxisAngle(new THREE.Vector3(0, 1, 0), carPhysics.angle);
+        camera.position.set(
+          carPhysics.x + driverOffset.x,
+          driverOffset.y,
+          carPhysics.z + driverOffset.z
+        );
+
+        const lookTarget = new THREE.Vector3(
+          carPhysics.x + Math.sin(carPhysics.angle) * 35,
+          1.8,
+          carPhysics.z + Math.cos(carPhysics.angle) * 35
+        );
+        camera.lookAt(lookTarget);
+        document.getElementById('cockpit-overlay').style.opacity = '1';
+      } else {
+        const camDistance = 14;
+        const camHeight = 6.5;
+        camera.position.set(
+          carPhysics.x - Math.sin(carPhysics.angle) * camDistance,
+          camHeight,
+          carPhysics.z - Math.cos(carPhysics.angle) * camDistance
+        );
+        camera.lookAt(carPhysics.x, 2.0, carPhysics.z);
+      }
+    }
+
+    let timerInterval = null;
+    let orderSpawnerInterval = null;
+
+    function startShiftTimer() {
+      timerInterval = setInterval(() => {
+        if (!gameState.started || gameState.gameOver) return;
+        gameState.timeLeft--;
+
+        const mins = Math.floor(gameState.timeLeft / 60);
+        const secs = gameState.timeLeft % 60;
+        document.getElementById('timer-display').textContent = 
+          `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+
+        if (gameState.timeLeft <= 0) {
+          endShift(false);
+        }
+      }, 1000);
+
+      orderSpawnerInterval = setInterval(() => {
+        if (!gameState.started || gameState.gameOver) return;
+        if (gameState.orders.length < 3) {
+          spawnOrder();
+        }
+      }, 7000);
+    }
+
+    function endShift(success) {
+      gameState.gameOver = true;
+      clearInterval(timerInterval);
+      clearInterval(orderSpawnerInterval);
+
+      const endModal = document.getElementById('modal-end');
+      const title = document.getElementById('end-title');
+      const desc = document.getElementById('end-desc');
+      const badge = document.getElementById('end-badge');
+
+      if (success) {
+        title.textContent = "SHIFT COMPLETED!";
+        title.className = "font-ps1 text-4xl sm:text-5xl text-emerald-400 tracking-wider";
+        desc.textContent = "Outstanding service! You delivered all 6 priority packages ahead of time!";
+        badge.textContent = "🏆";
+        badge.className = "w-16 h-16 mx-auto mb-2 bg-emerald-500 rounded-2xl flex items-center justify-center text-3xl shadow-lg";
+      } else {
+        title.textContent = "SHIFT TIME EXPIRED!";
+        title.className = "font-ps1 text-4xl sm:text-5xl text-rose-500 tracking-wider";
+        desc.textContent = "The 10-minute timer ran out before quota was met. Good effort out there!";
+        badge.textContent = "⏳";
+        badge.className = "w-16 h-16 mx-auto mb-2 bg-rose-600 rounded-2xl flex items-center justify-center text-3xl shadow-lg text-white";
+      }
+
+      document.getElementById('final-deliveries').textContent = `${gameState.deliveriesDone} / ${gameState.deliveriesGoal}`;
+      document.getElementById('final-coins').textContent = `${gameState.coins} GOLD COINS`;
+      const mins = Math.floor(gameState.timeLeft / 60);
+      const secs = gameState.timeLeft % 60;
+      document.getElementById('final-time').textContent = `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+      
+      const rating = gameState.deliveriesDone >= 6 ? '★★★★★' : (gameState.deliveriesDone >= 4 ? '★★★★☆' : '★★★☆☆');
+      document.getElementById('final-rating').textContent = rating;
+
+      endModal.classList.remove('hidden');
+    }
+
+    document.getElementById('btn-start-game').addEventListener('click', () => {
+      audio.init();
+      document.getElementById('modal-start').classList.add('hidden');
+      gameState.started = true;
+      startShiftTimer();
+      spawnOrder();
+      setTimeout(spawnOrder, 1500);
+    });
+
+    document.getElementById('btn-replay').addEventListener('click', () => {
+      window.location.reload();
+    });
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    let lastTime = performance.now();
+
+    function animate(currentTime) {
+      requestAnimationFrame(animate);
+
+      const dt = Math.min((currentTime - lastTime) / 1000, 0.1);
+      lastTime = currentTime;
+
+      if (gameState.started && !gameState.gameOver) {
+        updatePhysics(dt);
+      }
+
+      // Beacon Animations
+      if (beaconGroup.visible) {
+        beaconGroup.children[0].rotation.y += dt * 0.8;
+        beaconRing.scale.setScalar(1 + Math.sin(currentTime * 0.005) * 0.12);
+        diamondMesh.rotation.y += dt * 1.5;
+        diamondMesh.position.y = 22 + Math.sin(currentTime * 0.004) * 1.5;
+      }
+
+      // Hovering navigation arrow pulsing ring animation
+      if (floatingArrowRoot.visible) {
+        arrowHalo.rotation.z += dt * 3.5;
+        arrowHalo.scale.setScalar(1.0 + Math.sin(currentTime * 0.008) * 0.15);
+      }
+
+      updateCamera();
+      drawGPSRadar();
+      renderer.render(scene, camera);
+    }
+
+    window.onload = function () {
+      requestAnimationFrame(animate);
+    };
+  </script>
+</body>
+</html>
